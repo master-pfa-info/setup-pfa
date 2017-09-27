@@ -12,17 +12,27 @@ import (
 	"strings"
 )
 
+var (
+	usr *user.User
+)
+
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix("master-pfa: ")
 
-	goroot, err := installGo("1.9")
+	var err error
+
+	usr, err = user.Current()
+	if err != nil {
+		log.Fatalf("could not get current user infos: %v", err)
+	}
+
+	goroot, gopath, err := installGo("1.9")
 	if err != nil {
 		log.Fatalf("could not install Go-1.9: %v", err)
 	}
 
 	log.Printf("goroot=%q\n", goroot)
-	gopath := getGoPath()
 	log.Printf("gopath=%q\n", gopath)
 	srcdir := filepath.Join(gopath, "src")
 	err = os.MkdirAll(srcdir, 0755)
@@ -35,7 +45,13 @@ func main() {
 		clone(pkg, srcdir)
 	}
 
-	cmd := exec.Command("go", "get", "-v", "github.com/master-pfa-info/mcpi")
+	gocmd, err := exec.LookPath("go")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	cmd := exec.Command(gocmd, "get", "-v", "github.com/master-pfa-info/mcpi")
+	log.Printf("installing mcpi: %v", cmd.Args)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -45,19 +61,14 @@ func main() {
 	}
 }
 
-func installGo(v string) (string, error) {
+func installGo(v string) (string, string, error) {
 	log.Printf("downloading go-%v...", v)
 	burl := "https://golang.org/dl/go" + v + ".linux-amd64.tar.gz"
 	resp, err := http.Get(burl)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
-
-	usr, err := user.Current()
-	if err != nil {
-		log.Fatalf("could not get current user: %v", err)
-	}
 
 	goroot := filepath.Join(usr.HomeDir, "M_"+usr.Username, "go-"+v)
 
@@ -66,6 +77,7 @@ func installGo(v string) (string, error) {
 		log.Fatal(err)
 	}
 
+	log.Printf("installing go-%v...", v)
 	cmd := exec.Command("tar", "zxf", "-")
 	cmd.Dir = goroot
 	cmd.Stdin = resp.Body
@@ -77,8 +89,20 @@ func installGo(v string) (string, error) {
 	}
 
 	goroot = filepath.Join(goroot, "go")
+	gopath := filepath.Join(usr.HomeDir, "M_"+usr.Username, "go")
+	os.MkdirAll(gopath, 0755)
+
 	os.Setenv("GOROOT", goroot)
-	os.Setenv("PATH", filepath.Join(goroot, "bin")+":"+os.Getenv("PATH"))
+	os.Setenv("GOPATH", gopath)
+	os.Setenv("PATH",
+		strings.Join([]string{
+			filepath.Join(goroot, "bin"),
+			filepath.Join(gopath, "bin"),
+			os.Getenv("PATH"),
+		},
+			":",
+		),
+	)
 
 	fname := filepath.Join(usr.HomeDir, ".bashrc")
 	err = appendFile(
@@ -86,16 +110,19 @@ func installGo(v string) (string, error) {
 		[]byte(fmt.Sprintf(`
 ### AUTOMATICALLY added by setup-pfa
 export GOROOT=%q
-export PATH=$GOROOT/bin:$PATH
+export GOPATH=%q
+export PATH=${GOROOT}/bin:${GOPATH}/bin:${PATH}
+### AUTOMATICALLY added by setup-pfa [DONE]
 `,
 			goroot,
+			gopath,
 		)),
 	)
 	if err != nil {
 		log.Fatalf("could not modify bash_profile: %v", err)
 	}
 
-	return goroot, nil
+	return goroot, gopath, nil
 }
 
 func appendFile(fname string, data []byte) error {
@@ -121,18 +148,6 @@ func appendFile(fname string, data []byte) error {
 	}
 
 	return nil
-}
-
-func getGoPath() string {
-	p := os.Getenv("GOPATH")
-	if p != "" {
-		return p
-	}
-	raw, err := exec.Command("go", "env", "GOPATH").Output()
-	if err != nil {
-		log.Fatal(err)
-	}
-	return strings.TrimSuffix(string(raw), "\n")
 }
 
 func clone(pkg pkgType, srcdir string) {
@@ -161,6 +176,10 @@ type pkgType struct {
 var (
 	pkgs = []pkgType{
 		{"bitbucket.org/zombiezen/gopdf", "github.com/master-pfa-info/gopdf"},
+		{"github.com/golang/freetype", "github.com/golang/freetype"},
+		{"github.com/gonuts/binary", "github.com/gonuts/binary"},
+		{"github.com/llgcode/draw2d", "github.com/llgcode/draw2d"},
+		{"github.com/ajstarks/svgo", "github.com/ajstarks/svgo"},
 		{"go-hep.org/x/hep", "github.com/go-hep/hep"},
 		{"golang.org/x/exp", "github.com/golang/exp"},
 		{"golang.org/x/image", "github.com/golang/image"},
